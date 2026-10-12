@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>单摆模拟器 v2 — Week 05</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #1a1a24;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100vh;
+    overflow: hidden;
+    font-family: 'Segoe UI', sans-serif;
+    color: #8888aa;
+  }
+  canvas { display: block; }
+  .controls {
+    position: fixed;
+    bottom: 44px;
+    display: flex;
+    gap: 28px;
+    align-items: flex-end;
+    background: rgba(30, 30, 48, 0.85);
+    border: 1px solid rgba(100, 160, 255, 0.12);
+    border-radius: 10px;
+    padding: 14px 24px;
+    backdrop-filter: blur(6px);
+  }
+  .control-group {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+  }
+  .control-group label {
+    font-size: 11px;
+    letter-spacing: 1px;
+    color: #666688;
+    text-transform: uppercase;
+  }
+  .control-group .value {
+    font-size: 13px;
+    font-family: monospace;
+    color: #8899cc;
+    min-width: 50px;
+    text-align: center;
+  }
+  input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 120px;
+    height: 4px;
+    background: #2a2a40;
+    border-radius: 2px;
+    outline: none;
+    cursor: pointer;
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #5588dd;
+    box-shadow: 0 0 6px rgba(100, 160, 255, 0.4);
+    cursor: pointer;
+  }
+  .btn-reset {
+    background: rgba(100, 160, 255, 0.1);
+    border: 1px solid rgba(100, 160, 255, 0.25);
+    color: #8899cc;
+    padding: 8px 18px;
+    border-radius: 6px;
+    font-size: 12px;
+    letter-spacing: 1px;
+    cursor: pointer;
+    transition: background 0.2s;
+    align-self: flex-end;
+    margin-bottom: 2px;
+  }
+  .btn-reset:hover {
+    background: rgba(100, 160, 255, 0.2);
+  }
+  .info {
+    position: fixed;
+    bottom: 20px;
+    font-size: 13px;
+    letter-spacing: 1px;
+    opacity: 0.5;
+  }
+</style>
+</head>
+<body>
+<canvas id="canvas"></canvas>
+<div class="controls">
+  <div class="control-group">
+    <label>摆长 L (px)</label>
+    <input type="range" id="sliderL" min="100" max="350" value="200" step="1">
+    <span class="value" id="valL">200</span>
+  </div>
+  <div class="control-group">
+    <label>重力 g</label>
+    <input type="range" id="sliderG" min="1" max="25" value="9.8" step="0.1">
+    <span class="value" id="valG">9.8</span>
+  </div>
+  <div class="control-group">
+    <label>阻尼</label>
+    <input type="range" id="sliderD" min="0" max="0.010" value="0.001" step="0.001">
+    <span class="value" id="valD">0.001</span>
+  </div>
+  <button class="btn-reset" id="btnReset">重置摆动</button>
+</div>
+<div class="info">李文宏 · 7904126010 · 单摆模拟器 v2</div>
+<script>
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+
+function resize() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+resize();
+window.addEventListener('resize', resize);
+
+let L = 200;
+let G = 9.8;
+const SCALE = 100;
+let damping = 0.001;
+const BALL_RADIUS = 18;
+const TRAIL_LENGTH = 60;
+
+let theta = Math.PI / 4;
+let omega = 0;
+let trail = [];
+
+const INITIAL_THETA = Math.PI / 4;
+
+const pivotX = () => canvas.width / 2;
+const pivotY = () => canvas.height * 0.22;
+
+function update(dt) {
+  const steps = 4;
+  const subDt = dt / steps;
+  for (let i = 0; i < steps; i++) {
+    const alpha = -(G / (L / SCALE)) * Math.sin(theta);
+    omega += alpha * subDt;
+    omega *= (1 - damping);
+    theta += omega * subDt;
+  }
+
+  const bx = pivotX() + L * Math.sin(theta);
+  const by = pivotY() + L * Math.cos(theta);
+  trail.push({ x: bx, y: by });
+  if (trail.length > TRAIL_LENGTH) trail.shift();
+}
+
+function drawBackground() {
+  ctx.fillStyle = '#1a1a24';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  const grd = ctx.createRadialGradient(
+    pivotX(), pivotY() + L * 0.5, 20,
+    pivotX(), pivotY() + L * 0.5, L * 1.8
+  );
+  grd.addColorStop(0, 'rgba(60, 60, 120, 0.08)');
+  grd.addColorStop(1, 'rgba(26, 26, 36, 0)');
+  ctx.fillStyle = grd;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+}
+
+function drawPivot() {
+  ctx.beginPath();
+  ctx.arc(pivotX(), pivotY(), 5, 0, Math.PI * 2);
+  ctx.fillStyle = '#555570';
+  ctx.fill();
+
+  ctx.beginPath();
+  ctx.moveTo(pivotX() - 30, pivotY());
+  ctx.lineTo(pivotX() + 30, pivotY());
+  ctx.strokeStyle = '#44445a';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+}
+
+function drawTrail() {
+  if (trail.length < 2) return;
+  for (let i = 1; i < trail.length; i++) {
+    const alpha = (i / trail.length) * 0.4;
+    const width = (i / trail.length) * 3;
+    ctx.beginPath();
+    ctx.moveTo(trail[i - 1].x, trail[i - 1].y);
+    ctx.lineTo(trail[i].x, trail[i].y);
+    ctx.strokeStyle = `rgba(100, 160, 255, ${alpha})`;
+    ctx.lineWidth = width;
+    ctx.stroke();
+  }
+}
+
+function drawRod(bx, by) {
+  ctx.beginPath();
+  ctx.moveTo(pivotX(), pivotY());
+  ctx.lineTo(bx, by);
+  ctx.strokeStyle = '#6a6a8a';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+}
+
+function drawBall(bx, by) {
+  ctx.save();
+  ctx.shadowColor = 'rgba(100, 160, 255, 0.7)';
+  ctx.shadowBlur = 30;
+
+  const grd = ctx.createRadialGradient(
+    bx - 4, by - 4, 2,
+    bx, by, BALL_RADIUS
+  );
+  grd.addColorStop(0, '#aaccff');
+  grd.addColorStop(0.5, '#5588dd');
+  grd.addColorStop(1, '#335599');
+
+  ctx.beginPath();
+  ctx.arc(bx, by, BALL_RADIUS, 0, Math.PI * 2);
+  ctx.fillStyle = grd;
+  ctx.fill();
+  ctx.restore();
+
+  ctx.beginPath();
+  ctx.arc(bx - 5, by - 5, 5, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.15)';
+  ctx.fill();
+}
+
+function drawAngleArc() {
+  const arcR = 40;
+  ctx.beginPath();
+  ctx.moveTo(pivotX(), pivotY());
+  ctx.arc(pivotX(), pivotY(), arcR, Math.PI / 2 - Math.abs(theta), Math.PI / 2, theta > 0);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(100, 160, 255, 0.06)';
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(pivotX(), pivotY(), arcR, Math.PI / 2 - theta, Math.PI / 2, theta > 0);
+  ctx.strokeStyle = 'rgba(100, 160, 255, 0.2)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  const deg = (theta * 180 / Math.PI).toFixed(1);
+  ctx.fillStyle = 'rgba(100, 160, 255, 0.4)';
+  ctx.font = '12px monospace';
+  ctx.fillText(`${deg}°`, pivotX() + 46, pivotY() + 18);
+}
+
+let lastTime = null;
+
+function loop(timestamp) {
+  if (!lastTime) lastTime = timestamp;
+  const dt = Math.min((timestamp - lastTime) / 1000, 0.05);
+  lastTime = timestamp;
+
+  update(dt);
+
+  drawBackground();
+  drawTrail();
+  drawPivot();
+  drawAngleArc();
+
+  const bx = pivotX() + L * Math.sin(theta);
+  const by = pivotY() + L * Math.cos(theta);
+  drawRod(bx, by);
+  drawBall(bx, by);
+
+  requestAnimationFrame(loop);
+}
+
+requestAnimationFrame(loop);
+
+document.getElementById('sliderL').addEventListener('input', function () {
+  L = Number(this.value);
+  document.getElementById('valL').textContent = L;
+  trail = [];
+});
+
+document.getElementById('sliderG').addEventListener('input', function () {
+  G = Number(this.value);
+  document.getElementById('valG').textContent = G.toFixed(1);
+});
+
+document.getElementById('sliderD').addEventListener('input', function () {
+  damping = Number(this.value);
+  document.getElementById('valD').textContent = damping.toFixed(3);
+});
+
+document.getElementById('btnReset').addEventListener('click', function () {
+  theta = INITIAL_THETA;
+  omega = 0;
+  trail = [];
+});
+</script>
+</body>
+</html>
