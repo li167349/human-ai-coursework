@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>单摆模拟器 — Week 05</title>
+<title>双摆混沌模拟器 — Week 05</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
@@ -17,12 +17,13 @@
     font-family: 'Segoe UI', sans-serif;
     color: #8888aa;
   }
-  canvas { display: block; }
+  canvas { display: block; cursor: grab; }
+  canvas.dragging { cursor: grabbing; }
   .controls {
     position: fixed;
     bottom: 44px;
     display: flex;
-    gap: 28px;
+    gap: 20px;
     align-items: flex-end;
     background: rgba(30, 30, 48, 0.85);
     border: 1px solid rgba(100, 160, 255, 0.12);
@@ -52,7 +53,7 @@
   input[type="range"] {
     -webkit-appearance: none;
     appearance: none;
-    width: 120px;
+    width: 100px;
     height: 4px;
     background: #2a2a40;
     border-radius: 2px;
@@ -98,9 +99,19 @@
 <canvas id="canvas"></canvas>
 <div class="controls">
   <div class="control-group">
-    <label>摆长 L (px)</label>
-    <input type="range" id="sliderL" min="100" max="350" value="200" step="1">
-    <span class="value" id="valL">200</span>
+    <label>摆长 L₁</label>
+    <input type="range" id="sliderL1" min="60" max="200" value="140" step="1">
+    <span class="value" id="valL1">140</span>
+  </div>
+  <div class="control-group">
+    <label>摆长 L₂</label>
+    <input type="range" id="sliderL2" min="60" max="200" value="140" step="1">
+    <span class="value" id="valL2">140</span>
+  </div>
+  <div class="control-group">
+    <label>质量比 m₂/m₁</label>
+    <input type="range" id="sliderM" min="0.1" max="5" value="1" step="0.1">
+    <span class="value" id="valM">1.0</span>
   </div>
   <div class="control-group">
     <label>重力 g</label>
@@ -109,12 +120,12 @@
   </div>
   <div class="control-group">
     <label>阻尼</label>
-    <input type="range" id="sliderD" min="0" max="0.010" value="0.001" step="0.001">
-    <span class="value" id="valD">0.001</span>
+    <input type="range" id="sliderD" min="0" max="0.010" value="0.000" step="0.001">
+    <span class="value" id="valD">0.000</span>
   </div>
-  <button class="btn-reset" id="btnReset">重置摆动</button>
+  <button class="btn-reset" id="btnReset">重置</button>
 </div>
-<div class="info">李文宏 · 7904126010 · 单摆模拟器</div>
+<div class="info">李文宏 · 7904126010 · 双摆混沌模拟器</div>
 <script>
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
@@ -126,47 +137,93 @@ function resize() {
 resize();
 window.addEventListener('resize', resize);
 
-let L = 200;
+// === 双摆参数 ===
+let L1 = 140, L2 = 140;
+let m1 = 1, m2 = 1;
 let G = 9.8;
+let damping = 0;
 const SCALE = 100;
-let damping = 0.001;
-const BALL_RADIUS = 18;
-const TRAIL_LENGTH = 60;
+const BALL_R1 = 14, BALL_R2 = 16;
+const TRAIL_MAX = 500;
 
-let theta = Math.PI / 4;
-let omega = 0;
+// === 状态变量: [θ₁, ω₁, θ₂, ω₂] ===
+let state = [Math.PI * 0.6, 0, Math.PI * 0.8, 0];
+const INIT_STATE = [Math.PI * 0.6, 0, Math.PI * 0.8, 0];
+
 let trail = [];
-
-const INITIAL_THETA = Math.PI / 4;
+let dragging = 0; // 0=none, 1=bob1, 2=bob2
 
 const pivotX = () => canvas.width / 2;
-const pivotY = () => canvas.height * 0.22;
+const pivotY = () => canvas.height * 0.28;
 
-function update(dt) {
-  const steps = 4;
-  const subDt = dt / steps;
-  for (let i = 0; i < steps; i++) {
-    const alpha = -(G / (L / SCALE)) * Math.sin(theta);
-    omega += alpha * subDt;
-    omega *= (1 - damping);
-    theta += omega * subDt;
-  }
+// === 拉格朗日方程: 计算角加速度 ===
+function accel(t1, w1, t2, w2) {
+  const dt = t1 - t2;
+  const sinDt = Math.sin(dt);
+  const cosDt = Math.cos(dt);
+  const M = m1 + m2;
 
-  const bx = pivotX() + L * Math.sin(theta);
-  const by = pivotY() + L * Math.cos(theta);
-  trail.push({ x: bx, y: by });
-  if (trail.length > TRAIL_LENGTH) trail.shift();
+  const denom1 = M * L1 - m2 * L1 * cosDt * cosDt;
+  const a1 = (m2 * L1 * w1 * w1 * sinDt * cosDt
+            + m2 * G * Math.sin(t2) * cosDt
+            + m2 * L2 * w2 * w2 * sinDt
+            - M * G * Math.sin(t1)) / denom1;
+
+  const denom2 = (L2 / L1) * denom1;
+  const a2 = (-m2 * L2 * w2 * w2 * sinDt * cosDt
+            + M * G * Math.sin(t1) * cosDt
+            - M * L1 * w1 * w1 * sinDt
+            - M * G * Math.sin(t2)) / denom2;
+
+  return [a1, a2];
 }
 
+// === RK4 积分 ===
+function rk4Step(dt) {
+  const [t1, w1, t2, w2] = state;
+
+  const [a1_k1, a2_k1] = accel(t1, w1, t2, w2);
+  const k1 = [w1, a1_k1, w2, a2_k1];
+
+  const [a1_k2, a2_k2] = accel(t1 + k1[0]*dt/2, w1 + k1[1]*dt/2, t2 + k1[2]*dt/2, w2 + k1[3]*dt/2);
+  const k2 = [w1 + k1[1]*dt/2, a1_k2, w2 + k1[3]*dt/2, a2_k2];
+
+  const [a1_k3, a2_k3] = accel(t1 + k2[0]*dt/2, w1 + k2[1]*dt/2, t2 + k2[2]*dt/2, w2 + k2[3]*dt/2);
+  const k3 = [w1 + k2[1]*dt/2, a1_k3, w2 + k2[3]*dt/2, a2_k3];
+
+  const [a1_k4, a2_k4] = accel(t1 + k3[0]*dt, w1 + k3[1]*dt, t2 + k3[2]*dt, w2 + k3[3]*dt);
+  const k4 = [w1 + k3[1]*dt, a1_k4, w2 + k3[3]*dt, a2_k4];
+
+  state[0] += (k1[0] + 2*k2[0] + 2*k3[0] + k4[0]) * dt / 6;
+  state[1] += (k1[1] + 2*k2[1] + 2*k3[1] + k4[1]) * dt / 6;
+  state[2] += (k1[2] + 2*k2[2] + 2*k3[2] + k4[2]) * dt / 6;
+  state[3] += (k1[3] + 2*k2[3] + 2*k3[3] + k4[3]) * dt / 6;
+
+  if (damping > 0) {
+    state[1] *= (1 - damping);
+    state[3] *= (1 - damping);
+  }
+}
+
+function getPositions() {
+  const px = pivotX(), py = pivotY();
+  const x1 = px + L1 * Math.sin(state[0]);
+  const y1 = py + L1 * Math.cos(state[0]);
+  const x2 = x1 + L2 * Math.sin(state[2]);
+  const y2 = y1 + L2 * Math.cos(state[2]);
+  return { x1, y1, x2, y2 };
+}
+
+// === 渲染 ===
 function drawBackground() {
   ctx.fillStyle = '#1a1a24';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
   const grd = ctx.createRadialGradient(
-    pivotX(), pivotY() + L * 0.5, 20,
-    pivotX(), pivotY() + L * 0.5, L * 1.8
+    pivotX(), pivotY() + 80, 20,
+    pivotX(), pivotY() + 80, 350
   );
-  grd.addColorStop(0, 'rgba(60, 60, 120, 0.08)');
+  grd.addColorStop(0, 'rgba(60, 60, 120, 0.06)');
   grd.addColorStop(1, 'rgba(26, 26, 36, 0)');
   ctx.fillStyle = grd;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -188,100 +245,159 @@ function drawPivot() {
 
 function drawTrail() {
   if (trail.length < 2) return;
-  for (let i = 1; i < trail.length; i++) {
-    const alpha = (i / trail.length) * 0.4;
-    const width = (i / trail.length) * 3;
+  const len = trail.length;
+  for (let i = 1; i < len; i++) {
+    const t = i / len;
+    const hue = (i * 0.7 + performance.now() * 0.02) % 360;
+    const alpha = t * t * 0.6;
+    const width = t * 3.5;
     ctx.beginPath();
     ctx.moveTo(trail[i - 1].x, trail[i - 1].y);
     ctx.lineTo(trail[i].x, trail[i].y);
-    ctx.strokeStyle = `rgba(100, 160, 255, ${alpha})`;
+    ctx.strokeStyle = `hsla(${hue}, 80%, 65%, ${alpha})`;
     ctx.lineWidth = width;
     ctx.stroke();
   }
 }
 
-function drawRod(bx, by) {
+function drawRod(x1, y1, x2, y2) {
   ctx.beginPath();
   ctx.moveTo(pivotX(), pivotY());
-  ctx.lineTo(bx, by);
+  ctx.lineTo(x1, y1);
+  ctx.lineTo(x2, y2);
   ctx.strokeStyle = '#6a6a8a';
   ctx.lineWidth = 2;
   ctx.stroke();
 }
 
-function drawBall(bx, by) {
+function drawBall(x, y, r, color1, color2, color3) {
   ctx.save();
-  ctx.shadowColor = 'rgba(100, 160, 255, 0.7)';
-  ctx.shadowBlur = 30;
+  ctx.shadowColor = color2;
+  ctx.shadowBlur = 25;
 
-  const grd = ctx.createRadialGradient(
-    bx - 4, by - 4, 2,
-    bx, by, BALL_RADIUS
-  );
-  grd.addColorStop(0, '#aaccff');
-  grd.addColorStop(0.5, '#5588dd');
-  grd.addColorStop(1, '#335599');
+  const grd = ctx.createRadialGradient(x - r*0.25, y - r*0.25, r*0.1, x, y, r);
+  grd.addColorStop(0, color1);
+  grd.addColorStop(0.5, color2);
+  grd.addColorStop(1, color3);
 
   ctx.beginPath();
-  ctx.arc(bx, by, BALL_RADIUS, 0, Math.PI * 2);
+  ctx.arc(x, y, r, 0, Math.PI * 2);
   ctx.fillStyle = grd;
   ctx.fill();
   ctx.restore();
 
   ctx.beginPath();
-  ctx.arc(bx - 5, by - 5, 5, 0, Math.PI * 2);
-  ctx.fillStyle = 'rgba(255, 255, 255, 0.15)';
+  ctx.arc(x - r*0.3, y - r*0.3, r*0.25, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(255,255,255,0.12)';
   ctx.fill();
 }
 
-function drawAngleArc() {
-  const arcR = 40;
-  ctx.beginPath();
-  ctx.moveTo(pivotX(), pivotY());
-  ctx.arc(pivotX(), pivotY(), arcR, Math.PI / 2 - Math.abs(theta), Math.PI / 2, theta > 0);
-  ctx.closePath();
-  ctx.fillStyle = 'rgba(100, 160, 255, 0.06)';
-  ctx.fill();
-  ctx.beginPath();
-  ctx.arc(pivotX(), pivotY(), arcR, Math.PI / 2 - theta, Math.PI / 2, theta > 0);
-  ctx.strokeStyle = 'rgba(100, 160, 255, 0.2)';
-  ctx.lineWidth = 1;
-  ctx.stroke();
-
-  const deg = (theta * 180 / Math.PI).toFixed(1);
-  ctx.fillStyle = 'rgba(100, 160, 255, 0.4)';
-  ctx.font = '12px monospace';
-  ctx.fillText(`${deg}°`, pivotX() + 46, pivotY() + 18);
+function drawAngleInfo(x1, y1, x2, y2) {
+  const d1 = (state[0] * 180 / Math.PI).toFixed(1);
+  const d2 = (state[2] * 180 / Math.PI).toFixed(1);
+  ctx.fillStyle = 'rgba(100, 160, 255, 0.35)';
+  ctx.font = '11px monospace';
+  ctx.fillText(`θ₁=${d1}°`, pivotX() + 36, pivotY() + 14);
+  ctx.fillText(`θ₂=${d2}°`, x2 + 14, y2 - 10);
 }
 
+// === 鼠标拖拽 ===
+function getMousePos(e) {
+  const rect = canvas.getBoundingClientRect();
+  return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+}
+
+function dist(ax, ay, bx, by) {
+  return Math.hypot(ax - bx, ay - by);
+}
+
+canvas.addEventListener('mousedown', function (e) {
+  const pos = getMousePos(e);
+  const { x1, y1, x2, y2 } = getPositions();
+
+  if (dist(pos.x, pos.y, x2, y2) < BALL_R2 + 12) {
+    dragging = 2;
+  } else if (dist(pos.x, pos.y, x1, y1) < BALL_R1 + 12) {
+    dragging = 1;
+  }
+
+  if (dragging) {
+    canvas.classList.add('dragging');
+    state[1] = 0;
+    state[3] = 0;
+    trail = [];
+  }
+});
+
+canvas.addEventListener('mousemove', function (e) {
+  if (!dragging) return;
+  const pos = getMousePos(e);
+
+  if (dragging === 1) {
+    state[0] = Math.atan2(pos.x - pivotX(), pos.y - pivotY());
+  } else if (dragging === 2) {
+    const { x1, y1 } = getPositions();
+    state[2] = Math.atan2(pos.x - x1, pos.y - y1);
+  }
+});
+
+window.addEventListener('mouseup', function () {
+  if (dragging) {
+    dragging = 0;
+    canvas.classList.remove('dragging');
+  }
+});
+
+// === 主循环 ===
 let lastTime = null;
 
 function loop(timestamp) {
   if (!lastTime) lastTime = timestamp;
-  const dt = Math.min((timestamp - lastTime) / 1000, 0.05);
+  const dt = Math.min((timestamp - lastTime) / 1000, 0.03);
   lastTime = timestamp;
 
-  update(dt);
+  if (!dragging) {
+    const steps = 8;
+    const subDt = dt / steps;
+    for (let i = 0; i < steps; i++) rk4Step(subDt);
+  }
+
+  const { x1, y1, x2, y2 } = getPositions();
+
+  if (!dragging) {
+    trail.push({ x: x2, y: y2 });
+    if (trail.length > TRAIL_MAX) trail.shift();
+  }
 
   drawBackground();
   drawTrail();
   drawPivot();
-  drawAngleArc();
-
-  const bx = pivotX() + L * Math.sin(theta);
-  const by = pivotY() + L * Math.cos(theta);
-  drawRod(bx, by);
-  drawBall(bx, by);
+  drawRod(x1, y1, x2, y2);
+  drawBall(x1, y1, BALL_R1, '#cceeaa', '#66bb55', '#337733');
+  drawBall(x2, y2, BALL_R2, '#aaccff', '#5588dd', '#335599');
+  drawAngleInfo(x1, y1, x2, y2);
 
   requestAnimationFrame(loop);
 }
 
 requestAnimationFrame(loop);
 
-document.getElementById('sliderL').addEventListener('input', function () {
-  L = Number(this.value);
-  document.getElementById('valL').textContent = L;
+// === 控制面板 ===
+document.getElementById('sliderL1').addEventListener('input', function () {
+  L1 = Number(this.value);
+  document.getElementById('valL1').textContent = L1;
   trail = [];
+});
+
+document.getElementById('sliderL2').addEventListener('input', function () {
+  L2 = Number(this.value);
+  document.getElementById('valL2').textContent = L2;
+  trail = [];
+});
+
+document.getElementById('sliderM').addEventListener('input', function () {
+  m2 = Number(this.value);
+  document.getElementById('valM').textContent = m2.toFixed(1);
 });
 
 document.getElementById('sliderG').addEventListener('input', function () {
@@ -295,8 +411,7 @@ document.getElementById('sliderD').addEventListener('input', function () {
 });
 
 document.getElementById('btnReset').addEventListener('click', function () {
-  theta = INITIAL_THETA;
-  omega = 0;
+  state = [...INIT_STATE];
   trail = [];
 });
 </script>
