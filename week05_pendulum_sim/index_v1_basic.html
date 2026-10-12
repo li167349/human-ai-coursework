@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>单摆模拟器 v1 — Week 05</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #1a1a24;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100vh;
+    overflow: hidden;
+    font-family: 'Segoe UI', sans-serif;
+    color: #8888aa;
+  }
+  canvas { display: block; }
+  .info {
+    position: fixed;
+    bottom: 20px;
+    font-size: 13px;
+    letter-spacing: 1px;
+    opacity: 0.5;
+  }
+</style>
+</head>
+<body>
+<canvas id="canvas"></canvas>
+<div class="info">李文宏 · 7904126010 · 单摆模拟器 v1</div>
+<script>
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+
+function resize() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+resize();
+window.addEventListener('resize', resize);
+
+const L = 200;
+const G = 9.8;
+const SCALE = 100;
+const DAMPING = 0.999;
+const BALL_RADIUS = 18;
+const TRAIL_LENGTH = 60;
+
+let theta = Math.PI / 4;
+let omega = 0;
+let trail = [];
+
+const pivotX = () => canvas.width / 2;
+const pivotY = () => canvas.height * 0.22;
+
+function update(dt) {
+  const steps = 4;
+  const subDt = dt / steps;
+  for (let i = 0; i < steps; i++) {
+    const alpha = -(G / (L / SCALE)) * Math.sin(theta);
+    omega += alpha * subDt;
+    omega *= DAMPING;
+    theta += omega * subDt;
+  }
+
+  const bx = pivotX() + L * Math.sin(theta);
+  const by = pivotY() + L * Math.cos(theta);
+  trail.push({ x: bx, y: by });
+  if (trail.length > TRAIL_LENGTH) trail.shift();
+}
+
+function drawBackground() {
+  ctx.fillStyle = '#1a1a24';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  const grd = ctx.createRadialGradient(
+    pivotX(), pivotY() + L * 0.5, 20,
+    pivotX(), pivotY() + L * 0.5, L * 1.8
+  );
+  grd.addColorStop(0, 'rgba(60, 60, 120, 0.08)');
+  grd.addColorStop(1, 'rgba(26, 26, 36, 0)');
+  ctx.fillStyle = grd;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+}
+
+function drawPivot() {
+  ctx.beginPath();
+  ctx.arc(pivotX(), pivotY(), 5, 0, Math.PI * 2);
+  ctx.fillStyle = '#555570';
+  ctx.fill();
+
+  ctx.beginPath();
+  ctx.moveTo(pivotX() - 30, pivotY());
+  ctx.lineTo(pivotX() + 30, pivotY());
+  ctx.strokeStyle = '#44445a';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+}
+
+function drawTrail() {
+  if (trail.length < 2) return;
+  for (let i = 1; i < trail.length; i++) {
+    const alpha = (i / trail.length) * 0.4;
+    const width = (i / trail.length) * 3;
+    ctx.beginPath();
+    ctx.moveTo(trail[i - 1].x, trail[i - 1].y);
+    ctx.lineTo(trail[i].x, trail[i].y);
+    ctx.strokeStyle = `rgba(100, 160, 255, ${alpha})`;
+    ctx.lineWidth = width;
+    ctx.stroke();
+  }
+}
+
+function drawRod(bx, by) {
+  ctx.beginPath();
+  ctx.moveTo(pivotX(), pivotY());
+  ctx.lineTo(bx, by);
+  ctx.strokeStyle = '#6a6a8a';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+}
+
+function drawBall(bx, by) {
+  ctx.save();
+  ctx.shadowColor = 'rgba(100, 160, 255, 0.7)';
+  ctx.shadowBlur = 30;
+
+  const grd = ctx.createRadialGradient(
+    bx - 4, by - 4, 2,
+    bx, by, BALL_RADIUS
+  );
+  grd.addColorStop(0, '#aaccff');
+  grd.addColorStop(0.5, '#5588dd');
+  grd.addColorStop(1, '#335599');
+
+  ctx.beginPath();
+  ctx.arc(bx, by, BALL_RADIUS, 0, Math.PI * 2);
+  ctx.fillStyle = grd;
+  ctx.fill();
+  ctx.restore();
+
+  ctx.beginPath();
+  ctx.arc(bx - 5, by - 5, 5, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.15)';
+  ctx.fill();
+}
+
+function drawAngleArc() {
+  const arcR = 40;
+  ctx.beginPath();
+  ctx.moveTo(pivotX(), pivotY());
+  ctx.arc(pivotX(), pivotY(), arcR, Math.PI / 2 - Math.abs(theta), Math.PI / 2, theta > 0);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(100, 160, 255, 0.06)';
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(pivotX(), pivotY(), arcR, Math.PI / 2 - theta, Math.PI / 2, theta > 0);
+  ctx.strokeStyle = 'rgba(100, 160, 255, 0.2)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  const deg = (theta * 180 / Math.PI).toFixed(1);
+  ctx.fillStyle = 'rgba(100, 160, 255, 0.4)';
+  ctx.font = '12px monospace';
+  ctx.fillText(`${deg}°`, pivotX() + 46, pivotY() + 18);
+}
+
+let lastTime = null;
+
+function loop(timestamp) {
+  if (!lastTime) lastTime = timestamp;
+  const dt = Math.min((timestamp - lastTime) / 1000, 0.05);
+  lastTime = timestamp;
+
+  update(dt);
+
+  drawBackground();
+  drawTrail();
+  drawPivot();
+  drawAngleArc();
+
+  const bx = pivotX() + L * Math.sin(theta);
+  const by = pivotY() + L * Math.cos(theta);
+  drawRod(bx, by);
+  drawBall(bx, by);
+
+  requestAnimationFrame(loop);
+}
+
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
